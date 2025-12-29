@@ -6,6 +6,7 @@ import (
 	"strings"
 )
 
+// ResourceDocs renders documentation extracted from the provider docs tree.
 func ResourceDocs(resourceName, kind, filePath, section string, sectionFound bool, content string) string {
 	var text strings.Builder
 
@@ -14,16 +15,16 @@ func ResourceDocs(resourceName, kind, filePath, section string, sectionFound boo
 		titleKind = "Data Source"
 	}
 
-	text.WriteString(fmt.Sprintf("# Documentation: %s\n\n", resourceName))
-	text.WriteString(fmt.Sprintf("**Kind:** %s\n", titleKind))
+	fmt.Fprintf(&text, "# Documentation: %s\n\n", resourceName)
+	fmt.Fprintf(&text, "**Kind:** %s\n", titleKind)
 	if filePath != "" {
-		text.WriteString(fmt.Sprintf("**Source:** %s\n", filePath))
+		fmt.Fprintf(&text, "**Source:** %s\n", filePath)
 	}
 	if section != "" {
 		if sectionFound {
-			text.WriteString(fmt.Sprintf("**Section:** %s\n", section))
+			fmt.Fprintf(&text, "**Section:** %s\n", section)
 		} else {
-			text.WriteString(fmt.Sprintf("**Section:** %s (not found, showing closest match)\n", section))
+			fmt.Fprintf(&text, "**Section:** %s (not found, showing closest match)\n", section)
 		}
 	}
 	text.WriteString("\n")
@@ -32,11 +33,13 @@ func ResourceDocs(resourceName, kind, filePath, section string, sectionFound boo
 	return text.String()
 }
 
+// ResourceTestFile represents a Go test file and the test cases discovered within it.
 type ResourceTestFile struct {
 	FilePath string
 	Tests    []string
 }
 
+// ResourceTestOverview renders a summary of acceptance tests associated with a resource or data source.
 func ResourceTestOverview(resourceName, kind string, files []ResourceTestFile) string {
 	var text strings.Builder
 
@@ -45,7 +48,7 @@ func ResourceTestOverview(resourceName, kind string, files []ResourceTestFile) s
 		titleKind = "Data Source"
 	}
 
-	text.WriteString(fmt.Sprintf("# Acceptance Tests for %s (%s)\n\n", resourceName, titleKind))
+	fmt.Fprintf(&text, "# Acceptance Tests for %s (%s)\n\n", resourceName, titleKind)
 
 	if len(files) == 0 {
 		text.WriteString("No acceptance tests were discovered for this definition.\n")
@@ -56,16 +59,16 @@ func ResourceTestOverview(resourceName, kind string, files []ResourceTestFile) s
 	for _, f := range files {
 		totalTests += len(f.Tests)
 	}
-	text.WriteString(fmt.Sprintf("Discovered %d test file(s) with %d test case(s).\n\n", len(files), totalTests))
+	fmt.Fprintf(&text, "Discovered %d test file(s) with %d test case(s).\n\n", len(files), totalTests)
 
 	for _, file := range files {
-		text.WriteString(fmt.Sprintf("## %s\n", file.FilePath))
+		fmt.Fprintf(&text, "## %s\n", file.FilePath)
 		if len(file.Tests) == 0 {
 			text.WriteString("_No matching test cases found in this file._\n\n")
 			continue
 		}
 		for _, test := range file.Tests {
-			text.WriteString(fmt.Sprintf("- %s\n", test))
+			fmt.Fprintf(&text, "- %s\n", test)
 		}
 		text.WriteString("\n")
 	}
@@ -73,6 +76,7 @@ func ResourceTestOverview(resourceName, kind string, files []ResourceTestFile) s
 	return text.String()
 }
 
+// FeatureFlagInfo captures metadata about a provider feature flag.
 type FeatureFlagInfo struct {
 	Key         string
 	Description string
@@ -81,9 +85,10 @@ type FeatureFlagInfo struct {
 	DisabledFor []string
 }
 
+// FeatureFlagList renders the available feature flags and their metadata.
 func FeatureFlagList(flags []FeatureFlagInfo) string {
 	var text strings.Builder
-	text.WriteString(fmt.Sprintf("# Feature Flags (%d)\n\n", len(flags)))
+	fmt.Fprintf(&text, "# Feature Flags (%d)\n\n", len(flags))
 
 	if len(flags) == 0 {
 		text.WriteString("No feature flags were detected in the provider configuration.\n")
@@ -95,18 +100,18 @@ func FeatureFlagList(flags []FeatureFlagInfo) string {
 	})
 
 	for _, flag := range flags {
-		text.WriteString(fmt.Sprintf("## %s\n", flag.Key))
+		fmt.Fprintf(&text, "## %s\n", flag.Key)
 		if flag.Description != "" {
-			text.WriteString(fmt.Sprintf("%s\n\n", flag.Description))
+			fmt.Fprintf(&text, "%s\n\n", flag.Description)
 		}
 		if flag.Stage != "" {
-			text.WriteString(fmt.Sprintf("- **Stage:** %s\n", flag.Stage))
+			fmt.Fprintf(&text, "- **Stage:** %s\n", flag.Stage)
 		}
 		if flag.Default != "" {
-			text.WriteString(fmt.Sprintf("- **Default:** %s\n", flag.Default))
+			fmt.Fprintf(&text, "- **Default:** %s\n", flag.Default)
 		}
 		if len(flag.DisabledFor) > 0 {
-			text.WriteString(fmt.Sprintf("- **Disabled for:** %s\n", strings.Join(flag.DisabledFor, ", ")))
+			fmt.Fprintf(&text, "- **Disabled for:** %s\n", strings.Join(flag.DisabledFor, ", "))
 		}
 		text.WriteString("\n")
 	}
@@ -114,11 +119,13 @@ func FeatureFlagList(flags []FeatureFlagInfo) string {
 	return text.String()
 }
 
+// TimeoutDetail represents a single timeout configuration entry.
 type TimeoutDetail struct {
 	Name  string
 	Value string
 }
 
+// ResourceBehaviorInfo summarises advanced behaviours configured on a resource schema.
 type ResourceBehaviorInfo struct {
 	FilePath      string
 	FunctionName  string
@@ -129,6 +136,7 @@ type ResourceBehaviorInfo struct {
 	Notes         []string
 }
 
+// ResourceBehaviors renders the behavioural summary for a resource/data source.
 func ResourceBehaviors(resourceName, kind string, info ResourceBehaviorInfo) string {
 	var text strings.Builder
 
@@ -137,19 +145,19 @@ func ResourceBehaviors(resourceName, kind string, info ResourceBehaviorInfo) str
 		titleKind = "Data Source"
 	}
 
-	text.WriteString(fmt.Sprintf("# Behaviors for %s (%s)\n\n", resourceName, titleKind))
+	fmt.Fprintf(&text, "# Behaviors for %s (%s)\n\n", resourceName, titleKind)
 	if info.FilePath != "" {
-		text.WriteString(fmt.Sprintf("**File:** %s\n", info.FilePath))
+		fmt.Fprintf(&text, "**File:** %s\n", info.FilePath)
 	}
 	if info.FunctionName != "" {
-		text.WriteString(fmt.Sprintf("**Function:** %s\n", info.FunctionName))
+		fmt.Fprintf(&text, "**Function:** %s\n", info.FunctionName)
 	}
 	text.WriteString("\n")
 
 	if len(info.Timeouts) > 0 {
 		text.WriteString("## Timeouts\n\n")
 		for _, t := range info.Timeouts {
-			text.WriteString(fmt.Sprintf("- %s: %s\n", t.Name, t.Value))
+			fmt.Fprintf(&text, "- %s: %s\n", t.Name, t.Value)
 		}
 		text.WriteString("\n")
 	} else if strings.TrimSpace(info.TimeoutsRaw) != "" {
@@ -164,7 +172,7 @@ func ResourceBehaviors(resourceName, kind string, info ResourceBehaviorInfo) str
 	if len(info.CustomizeDiff) > 0 {
 		text.WriteString("## CustomizeDiff\n\n")
 		for _, entry := range info.CustomizeDiff {
-			text.WriteString(fmt.Sprintf("- %s\n", entry))
+			fmt.Fprintf(&text, "- %s\n", entry)
 		}
 		text.WriteString("\n")
 	}
@@ -181,7 +189,7 @@ func ResourceBehaviors(resourceName, kind string, info ResourceBehaviorInfo) str
 	if len(info.Notes) > 0 {
 		text.WriteString("## Additional Notes\n\n")
 		for _, note := range info.Notes {
-			text.WriteString(fmt.Sprintf("- %s\n", note))
+			fmt.Fprintf(&text, "- %s\n", note)
 		}
 		text.WriteString("\n")
 	}
@@ -195,29 +203,31 @@ func ResourceBehaviors(resourceName, kind string, info ResourceBehaviorInfo) str
 	return text.String()
 }
 
+// ExampleFile describes a single file included in an example directory.
 type ExampleFile struct {
 	FileName string
 	FilePath string
 	Content  string
 }
 
+// ExampleDirectory renders the files that make up an example scenario.
 func ExampleDirectory(examplePath string, files []ExampleFile) string {
 	var text strings.Builder
-	text.WriteString(fmt.Sprintf("# Example: %s\n\n", examplePath))
+	fmt.Fprintf(&text, "# Example: %s\n\n", examplePath)
 
 	if len(files) == 0 {
 		text.WriteString("No files were found for this example.\n")
 		return text.String()
 	}
 
-	text.WriteString(fmt.Sprintf("Contains %d file(s).\n\n", len(files)))
+	fmt.Fprintf(&text, "Contains %d file(s).\n\n", len(files))
 
 	sort.Slice(files, func(i, j int) bool {
 		return files[i].FilePath < files[j].FilePath
 	})
 
 	for _, file := range files {
-		text.WriteString(fmt.Sprintf("## %s\n\n", file.FilePath))
+		fmt.Fprintf(&text, "## %s\n\n", file.FilePath)
 		text.WriteString(renderExampleFileContent(file))
 	}
 

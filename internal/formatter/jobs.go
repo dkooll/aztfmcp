@@ -10,26 +10,26 @@ func IncrementalSyncProgress(totalRepos, synced, skipped int, updatedRepos, erro
 	var text strings.Builder
 	text.WriteString("# Incremental Sync Completed\n\n")
 
-	text.WriteString(fmt.Sprintf("Checked %d repositories\n", totalRepos))
-	text.WriteString(fmt.Sprintf("Updated repositories: %d\n", synced))
-	text.WriteString(fmt.Sprintf("Skipped (up-to-date): %d\n\n", skipped))
+	fmt.Fprintf(&text, "Checked %d repositories\n", totalRepos)
+	fmt.Fprintf(&text, "Updated repositories: %d\n", synced)
+	fmt.Fprintf(&text, "Skipped (up-to-date): %d\n\n", skipped)
 
 	if synced > 0 {
 		text.WriteString("Updated repositories:\n")
 		for _, repo := range updatedRepos {
-			text.WriteString(fmt.Sprintf("- %s\n", repo))
+			fmt.Fprintf(&text, "- %s\n", repo)
 		}
 		text.WriteString("\n")
 	}
 
 	if len(errors) > 0 {
-		text.WriteString(fmt.Sprintf("%d errors occurred:\n", len(errors)))
+		fmt.Fprintf(&text, "%d errors occurred:\n", len(errors))
 		for i, err := range errors {
 			if i >= 10 {
-				text.WriteString(fmt.Sprintf("... and %d more errors\n", len(errors)-10))
+				fmt.Fprintf(&text, "... and %d more errors\n", len(errors)-10)
 				break
 			}
-			text.WriteString(fmt.Sprintf("- %s\n", err))
+			fmt.Fprintf(&text, "- %s\n", err)
 		}
 	}
 
@@ -38,18 +38,18 @@ func IncrementalSyncProgress(totalRepos, synced, skipped int, updatedRepos, erro
 
 func JobDetails(jobID, jobType, status string, startedAt time.Time, completedAt *time.Time, errorMsg string, progressText string) string {
 	var text strings.Builder
-	text.WriteString(fmt.Sprintf("# Sync Job %s (%s)\n\n", jobID, jobType))
-	text.WriteString(fmt.Sprintf("Status: %s\n", strings.ToUpper(status)))
-	text.WriteString(fmt.Sprintf("Started: %s\n", startedAt.Format(time.RFC3339)))
+	fmt.Fprintf(&text, "# Sync Job %s (%s)\n\n", jobID, jobType)
+	fmt.Fprintf(&text, "Status: %s\n", strings.ToUpper(status))
+	fmt.Fprintf(&text, "Started: %s\n", startedAt.Format(time.RFC3339))
 	if completedAt != nil {
 		duration := completedAt.Sub(startedAt)
-		text.WriteString(fmt.Sprintf("Completed: %s (duration %s)\n", completedAt.Format(time.RFC3339), duration.Round(time.Second)))
+		fmt.Fprintf(&text, "Completed: %s (duration %s)\n", completedAt.Format(time.RFC3339), duration.Round(time.Second))
 	} else {
-		text.WriteString(fmt.Sprintf("Elapsed: %s\n", time.Since(startedAt).Round(time.Second)))
+		fmt.Fprintf(&text, "Elapsed: %s\n", time.Since(startedAt).Round(time.Second))
 	}
 
 	if errorMsg != "" {
-		text.WriteString(fmt.Sprintf("\nError: %s\n", errorMsg))
+		fmt.Fprintf(&text, "\nError: %s\n", errorMsg)
 	}
 
 	if progressText != "" {
@@ -68,10 +68,10 @@ func JobList(jobs []JobInfo) string {
 	var text strings.Builder
 	text.WriteString("# Sync Jobs\n\n")
 	for _, job := range jobs {
-		text.WriteString(fmt.Sprintf("- %s (%s) — %s", job.ID, job.Type, strings.ToUpper(job.Status)))
+		fmt.Fprintf(&text, "- %s (%s) — %s", job.ID, job.Type, strings.ToUpper(job.Status))
 		if job.CompletedAt != nil {
 			duration := job.CompletedAt.Sub(job.StartedAt)
-			text.WriteString(fmt.Sprintf(" in %s", duration.Round(time.Second)))
+			fmt.Fprintf(&text, " in %s", duration.Round(time.Second))
 		}
 		text.WriteString("\n")
 	}

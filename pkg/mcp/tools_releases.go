@@ -14,14 +14,16 @@ import (
 )
 
 type releaseSummaryArgs struct {
-	Version string `json:"version"`
+	Version string   `json:"version"`
+	Fields  []string `json:"fields"`
 }
 
 type releaseSnippetArgs struct {
-	Version       string `json:"version"`
-	Query         string `json:"query"`
-	MaxContext    int    `json:"max_context_lines"`
-	FallbackMatch string `json:"fallback_match"`
+	Version       string   `json:"version"`
+	Query         string   `json:"query"`
+	MaxContext    int      `json:"max_context_lines"`
+	FallbackMatch string   `json:"fallback_match"`
+	Fields        []string `json:"fields"`
 }
 
 func (s *Server) handleGetReleaseSummary(args any) map[string]any {
@@ -51,9 +53,11 @@ func (s *Server) handleGetReleaseSummary(args any) map[string]any {
 	if version == "" {
 		release, entries, err = s.db.GetLatestReleaseWithEntries(repo.ID)
 	} else {
+		// Try exact version first
 		relVersion := strings.TrimPrefix(version, "v")
 		release, entries, err = s.db.GetReleaseWithEntriesByVersion(repo.ID, relVersion)
 		if err != nil {
+			// Then try by tag (with v prefix)
 			tag := version
 			if !strings.HasPrefix(strings.ToLower(tag), "v") {
 				tag = "v" + tag
@@ -77,7 +81,17 @@ func (s *Server) handleGetReleaseSummary(args any) map[string]any {
 		fullName = repo.Name
 	}
 
-	summary := formatter.ReleaseSummary(fullName, release, entries)
+	includeEntries := fieldIncluded(params.Fields, "entries")
+	if len(params.Fields) == 0 {
+		includeEntries = true
+	}
+
+	if includeEntries {
+		summary := formatter.ReleaseSummary(fullName, release, entries)
+		return SuccessResponse(summary)
+	}
+
+	summary := minimalReleaseSummary(fullName, release)
 	return SuccessResponse(summary)
 }
 
@@ -110,8 +124,8 @@ func (s *Server) handleGetReleaseSnippet(args any) map[string]any {
 	release, entries, err := s.db.GetReleaseWithEntriesByVersion(repo.ID, relVersion)
 	if err != nil {
 		tag := version
-		if !strings.HasPrefix(strings.ToLower(tag), "v") {
-			tag = "v" + tag
+		if stripped, ok := strings.CutPrefix(tag, "v"); ok {
+			tag = "v" + stripped
 		}
 		release, entries, err = s.db.GetReleaseWithEntriesByTag(repo.ID, tag)
 	}
@@ -159,8 +173,16 @@ func (s *Server) handleGetReleaseSnippet(args any) map[string]any {
 		maxLines = 24
 	}
 
+	includeHeader := fieldIncluded(params.Fields, "header")
+	includeFile := fieldIncluded(params.Fields, "file")
+	includeDiff := fieldIncluded(params.Fields, "diff")
+	includeCompare := fieldIncluded(params.Fields, "compare_url")
+	if len(params.Fields) == 0 {
+		includeHeader, includeFile, includeDiff, includeCompare = true, true, true, true
+	}
+
 	trimmed, truncated := trimPatchLines(patch, maxLines)
-	text := formatReleaseSnippetResponse(repo, release, entry, filename, trimmed, truncated, maxLines)
+	text := formatReleaseSnippetResponse(repo, release, entry, filename, trimmed, truncated, maxLines, includeHeader, includeFile, includeDiff, includeCompare)
 	return SuccessResponse(text)
 }
 
@@ -191,11 +213,13 @@ func (s *Server) handleBackfillRelease(args any) map[string]any {
 		return ErrorResponse(fmt.Sprintf("Failed to load repository metadata: %v", err))
 	}
 
+	// Load the stored CHANGELOG.md from DB
 	file, err := s.db.GetFile(repo.Name, "CHANGELOG.md")
 	if err != nil {
 		return ErrorResponse("CHANGELOG.md not found in local index; run a full sync first")
 	}
 
+	// Extract single release block and persist
 	raw := strings.TrimSpace(file.Content)
 	if raw == "" {
 		return ErrorResponse("CHANGELOG.md is empty")
@@ -235,8 +259,12 @@ func (s *Server) handleBackfillRelease(args any) map[string]any {
 	return SuccessResponse(fmt.Sprintf("Backfilled release %s with %d entries", tag, len(entries)))
 }
 
+// extractReleaseBlock finds the section for a specific version and returns its text and date.
 func extractReleaseBlock(changelog string, version string) (string, string, bool) {
+	// Match heading like: ## [4.48.0] (2024-01-01) or ## 4.48.0 (2024-01-01)
+	// Build a regex that captures the heading and subsequent text until next '## '
 	esc := regexp.QuoteMeta(version)
+	// Allow optional brackets and optional leading v in text
 	heading := regexp.MustCompile(`(?m)^##\s*(?:\[` + esc + `\]|v?` + esc + `)\s*(?:\(([^)]+)\))?\s*$`)
 	loc := heading.FindStringSubmatchIndex(changelog)
 	if loc == nil {
@@ -247,6 +275,7 @@ func extractReleaseBlock(changelog string, version string) (string, string, bool
 	if len(loc) >= 4 && loc[2] != -1 && loc[3] != -1 {
 		date = strings.TrimSpace(changelog[loc[2]:loc[3]])
 	}
+	// Find next heading
 	next := regexp.MustCompile(`(?m)^##\s+`).FindStringIndex(changelog[start+2:])
 	var end int
 	if next == nil {
@@ -268,8 +297,8 @@ func parseReleaseEntriesFromBlock(block string) []database.ProviderReleaseEntry 
 		if strings.HasPrefix(t, "## ") {
 			continue
 		}
-		if strings.HasPrefix(t, "### ") {
-			section = strings.TrimSpace(strings.TrimPrefix(t, "### "))
+		if after, ok := strings.CutPrefix(t, "### "); ok {
+			section = strings.TrimSpace(after)
 			continue
 		}
 		if strings.HasPrefix(t, "-") || strings.HasPrefix(t, "*") {
@@ -481,35 +510,6 @@ func scorePatchCandidate(filename string, patch string, targets releaseEntryTarg
 	return score
 }
 
-func matchesFilename(actual string, candidates []string) bool {
-	for _, candidate := range candidates {
-		candidate = strings.TrimSpace(candidate)
-		if candidate == "" {
-			continue
-		}
-		if strings.HasSuffix(actual, candidate) {
-			return true
-		}
-	}
-	return false
-}
-
-func containsAny(actual string, tokens []string) bool {
-	if actual == "" {
-		return false
-	}
-	for _, token := range tokens {
-		token = strings.TrimSpace(token)
-		if token == "" {
-			continue
-		}
-		if strings.Contains(actual, token) {
-			return true
-		}
-	}
-	return false
-}
-
 func uniqueStrings(values []string) []string {
 	seen := make(map[string]struct{})
 	var out []string
@@ -565,24 +565,55 @@ func trimPatchLines(patch string, maxLines int) (string, bool) {
 	return strings.Join(lines, "\n"), truncated
 }
 
-func formatReleaseSnippetResponse(repo *database.Repository, release *database.ProviderRelease, entry *database.ProviderReleaseEntry, filename, patch string, truncated bool, maxLines int) string {
+func formatReleaseSnippetResponse(repo *database.Repository, release *database.ProviderRelease, entry *database.ProviderReleaseEntry, filename, patch string, truncated bool, maxLines int, includeHeader, includeFile, includeDiff, includeCompare bool) string {
 	var b strings.Builder
 	fullName := repo.FullName
 	if fullName == "" {
 		fullName = repo.Name
 	}
 
-	b.WriteString(fmt.Sprintf("Release %s – %s\n", release.Version, entry.Title))
-	b.WriteString(fmt.Sprintf("Repository: %s\n", fullName))
-	b.WriteString(fmt.Sprintf("File: %s\n", filename))
-	b.WriteString("```diff\n")
-	b.WriteString(patch)
-	b.WriteString("\n```")
-	if truncated {
-		b.WriteString(fmt.Sprintf("\n… showing first %d diff lines", maxLines))
+	if includeHeader {
+		fmt.Fprintf(&b, "Release %s – %s\n", release.Version, entry.Title)
+		fmt.Fprintf(&b, "Repository: %s\n", fullName)
 	}
-	if release.ComparisonURL.Valid && release.ComparisonURL.String != "" {
-		b.WriteString(fmt.Sprintf("\nCompare: %s", release.ComparisonURL.String))
+	if includeFile && filename != "" {
+		fmt.Fprintf(&b, "File: %s\n", filename)
+	}
+	if includeDiff {
+		b.WriteString("```diff\n")
+		b.WriteString(patch)
+		b.WriteString("\n```")
+		if truncated {
+			fmt.Fprintf(&b, "\n… showing first %d diff lines", maxLines)
+		}
+	}
+	if includeCompare && release.ComparisonURL.Valid && release.ComparisonURL.String != "" {
+		fmt.Fprintf(&b, "\nCompare: %s", release.ComparisonURL.String)
 	}
 	return b.String()
+}
+
+func fieldIncluded(fields []string, target string) bool {
+	if len(fields) == 0 {
+		return true
+	}
+	target = strings.ToLower(strings.TrimSpace(target))
+	for _, f := range fields {
+		if strings.ToLower(strings.TrimSpace(f)) == target {
+			return true
+		}
+	}
+	return false
+}
+
+func minimalReleaseSummary(repoName string, release *database.ProviderRelease) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Release %s\nRepository: %s\n", release.Version, repoName)
+	if release.Tag != "" {
+		fmt.Fprintf(&b, "Tag: %s\n", release.Tag)
+	}
+	if release.ReleaseDate.Valid && release.ReleaseDate.String != "" {
+		fmt.Fprintf(&b, "Date: %s\n", release.ReleaseDate.String)
+	}
+	return strings.TrimSpace(b.String())
 }

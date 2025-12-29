@@ -128,8 +128,17 @@ func parseChangelogReleases(content string) []parsedRelease {
 			continue
 		}
 
+		// Check for ### heading (Markdown format)
 		if remainder, ok := strings.CutPrefix(line, "### "); ok {
 			sectionName := strings.TrimSpace(remainder)
+			currentSection = &parsedSection{Name: sectionName}
+			current.Sections = append(current.Sections, currentSection)
+			continue
+		}
+
+		// Check for ALL CAPS section headers with colon (e.g., FEATURES:, ENHANCEMENTS:)
+		if isAllCapsHeader(line) {
+			sectionName := strings.TrimSuffix(strings.TrimSpace(line), ":")
 			currentSection = &parsedSection{Name: sectionName}
 			current.Sections = append(current.Sections, currentSection)
 			continue
@@ -162,8 +171,8 @@ func parseChangelogReleases(content string) []parsedRelease {
 }
 
 func parseReleaseHeading(line string) (*parsedRelease, bool) {
-		trimmedHead, _ := strings.CutPrefix(line, "##")
-		trimmed := strings.TrimSpace(trimmedHead)
+	trimmedHead, _ := strings.CutPrefix(line, "##")
+	trimmed := strings.TrimSpace(trimmedHead)
 	trimmed = strings.TrimSpace(trimmed)
 	if trimmed == "" {
 		return nil, false
@@ -273,6 +282,23 @@ func normalizeTagName(tag string) string {
 	return strings.ToLower(tag)
 }
 
+func isAllCapsHeader(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	// Must end with colon and contain at least one letter
+	if !strings.HasSuffix(trimmed, ":") || len(trimmed) < 2 {
+		return false
+	}
+	// Remove the trailing colon
+	withoutColon := strings.TrimSuffix(trimmed, ":")
+	// Check if all characters are uppercase letters or spaces
+	for _, r := range withoutColon {
+		if r != ' ' && (r < 'A' || r > 'Z') {
+			return false
+		}
+	}
+	return true
+}
+
 func isListEntry(line string) bool {
 	trimmed := strings.TrimSpace(line)
 	return strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") || strings.HasPrefix(trimmed, "-") || strings.HasPrefix(trimmed, "*")
@@ -330,13 +356,31 @@ func buildReleaseEntries(rel parsedRelease) []database.ProviderReleaseEntry {
 
 func changeTypeForSection(section, text string) string {
 	lower := strings.ToLower(section)
+	textLower := strings.ToLower(text)
+
 	switch lower {
 	case "features":
-		if strings.Contains(strings.ToLower(text), "new resource") {
+		if strings.Contains(textLower, "new list resource") {
+			return "new_list_resource"
+		}
+		if strings.Contains(textLower, "new action") {
+			return "new_action"
+		}
+		if strings.Contains(textLower, "new ephemeral") {
+			return "new_ephemeral"
+		}
+		if strings.Contains(textLower, "new data source") {
+			return "new_data_source"
+		}
+		if strings.Contains(textLower, "new resource") {
 			return "new_resource"
 		}
 		return "feature"
 	case "enhancements", "improvements":
+		// Check for dependency updates
+		if strings.HasPrefix(textLower, "dependencies:") {
+			return "dependency_update"
+		}
 		return "enhancement"
 	case "bug fixes", "bugfixes", "bugs":
 		return "bugfix"
@@ -344,8 +388,13 @@ func changeTypeForSection(section, text string) string {
 		return "breaking_change"
 	case "security":
 		return "security"
+	case "deprecations", "notes", "note":
+		return "deprecation"
+	default:
+		// If section is not recognized but is valid, return empty string
+		// This allows entries to be stored but without a specific type
+		return ""
 	}
-	return ""
 }
 
 func slugify(value string) string {

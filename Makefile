@@ -1,6 +1,6 @@
 .PHONY: build run test clean install deps fmt vet lint
 
-BINARY_NAME=az-cn-azurerm-mcp
+BINARY_NAME=aztfmcp
 BUILD_DIR=./bin
 CMD_DIR=./cmd/server
 ORG?=hashicorp

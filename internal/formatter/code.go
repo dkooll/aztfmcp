@@ -10,7 +10,7 @@ import (
 
 func CodeSearchResults(query string, files []database.RepositoryFile, getRepositoryName func(int64) string) string {
 	var text strings.Builder
-	text.WriteString(fmt.Sprintf("# Code Search Results for '%s' (%d matches)\n\n", query, len(files)))
+	fmt.Fprintf(&text, "# Code Search Results for '%s' (%d matches)\n\n", query, len(files))
 
 	if len(files) == 0 {
 		text.WriteString("No code matches found.\n")
@@ -19,7 +19,7 @@ func CodeSearchResults(query string, files []database.RepositoryFile, getReposit
 
 	for _, file := range files {
 		repositoryName := getRepositoryName(file.RepositoryID)
-		text.WriteString(fmt.Sprintf("## %s / %s\n", repositoryName, file.FilePath))
+		fmt.Fprintf(&text, "## %s / %s\n", repositoryName, file.FilePath)
 		text.WriteString("```\n")
 		text.WriteString(ExtractCodeContext(file.Content, query))
 		text.WriteString("```\n\n")
@@ -40,9 +40,9 @@ func ExtractCodeContext(content, query string) string {
 
 			for j := start; j < end; j++ {
 				if j == i {
-					text.WriteString(fmt.Sprintf("→ %d: %s\n", j+1, lines[j]))
+					fmt.Fprintf(&text, "→ %d: %s\n", j+1, lines[j])
 				} else {
-					text.WriteString(fmt.Sprintf("  %d: %s\n", j+1, lines[j]))
+					fmt.Fprintf(&text, "  %d: %s\n", j+1, lines[j])
 				}
 			}
 			text.WriteString("...\n")
@@ -53,16 +53,16 @@ func ExtractCodeContext(content, query string) string {
 	return text.String()
 }
 
-func FileContent(repositoryName, filePath, fileType string, sizeBytes int64, content string, startLine, endLine, totalLines int) string {
+func FileContent(repositoryName, filePath, fileType string, sizeBytes int64, content string, startLine, endLine, totalLines int, includeContent bool) string {
 	var text strings.Builder
-	text.WriteString(fmt.Sprintf("# %s / %s\n\n", repositoryName, filePath))
-	text.WriteString(fmt.Sprintf("**Size:** %d bytes\n", sizeBytes))
-	text.WriteString(fmt.Sprintf("**Type:** %s\n\n", fileType))
+	fmt.Fprintf(&text, "# %s / %s\n\n", repositoryName, filePath)
+	fmt.Fprintf(&text, "**Size:** %d bytes\n", sizeBytes)
+	fmt.Fprintf(&text, "**Type:** %s\n\n", fileType)
 	if startLine > 0 {
 		if endLine == 0 {
 			endLine = totalLines
 		}
-		text.WriteString(fmt.Sprintf("**Lines:** %d-%d of %d\n\n", startLine, endLine, totalLines))
+		fmt.Fprintf(&text, "**Lines:** %d-%d of %d\n\n", startLine, endLine, totalLines)
 	}
 	lang := ""
 	switch fileType {
@@ -82,21 +82,9 @@ func FileContent(repositoryName, filePath, fileType string, sizeBytes int64, con
 	} else {
 		text.WriteString("```" + lang + "\n")
 	}
-	text.WriteString(content)
+	if includeContent {
+		text.WriteString(content)
+	}
 	text.WriteString("\n```\n")
 	return text.String()
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

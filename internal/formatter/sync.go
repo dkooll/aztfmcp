@@ -15,25 +15,25 @@ func SyncProgress(progress *indexer.SyncProgress) string {
 	var text strings.Builder
 	text.WriteString("## Summary\n\n")
 	succeeded := progress.ProcessedRepos - len(progress.Errors)
-	text.WriteString(fmt.Sprintf("Successfully synced %d/%d repositories\n\n", succeeded, progress.TotalRepos))
+	fmt.Fprintf(&text, "Successfully synced %d/%d repositories\n\n", succeeded, progress.TotalRepos)
 
 	if len(progress.UpdatedRepos) > 0 {
 		text.WriteString("Updated repositories:\n")
 		for _, repo := range progress.UpdatedRepos {
-			text.WriteString(fmt.Sprintf("- %s\n", repo))
+			fmt.Fprintf(&text, "- %s\n", repo)
 		}
 		text.WriteString("\n")
 	}
 
 	if len(progress.Errors) > 0 {
-		text.WriteString(fmt.Sprintf("%d errors occurred:\n", len(progress.Errors)))
+		fmt.Fprintf(&text, "%d errors occurred:\n", len(progress.Errors))
 		for i, err := range progress.Errors {
 			if i >= 10 {
 				remaining := len(progress.Errors) - 10
-				text.WriteString(fmt.Sprintf("... and %d more errors\n", remaining))
+				fmt.Fprintf(&text, "... and %d more errors\n", remaining)
 				break
 			}
-			text.WriteString(fmt.Sprintf("- %s\n", err))
+			fmt.Fprintf(&text, "- %s\n", err)
 		}
 	}
 
