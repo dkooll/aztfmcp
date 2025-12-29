@@ -37,9 +37,19 @@ type RepositoryFile struct {
 	SizeBytes    int64
 }
 
+type ProviderService struct {
+	ID                int64
+	RepositoryID      int64
+	Name              string
+	FilePath          sql.NullString
+	WebsiteCategories sql.NullString
+	GitHubLabel       sql.NullString
+}
+
 type ProviderResource struct {
 	ID                 int64
 	RepositoryID       int64
+	ServiceID          sql.NullInt64
 	Name               string
 	DisplayName        sql.NullString
 	Kind               string
@@ -49,6 +59,7 @@ type ProviderResource struct {
 	VersionAdded       sql.NullString
 	VersionRemoved     sql.NullString
 	BreakingChanges    sql.NullString
+	APIVersion         sql.NullString
 }
 
 type ProviderAttribute struct {
@@ -346,7 +357,12 @@ func (db *DB) SearchFilesFTS(match string, limit int) ([]RepositoryFile, error) 
         FROM repository_files mf
         JOIN repository_files_fts ON repository_files_fts.rowid = mf.id
         WHERE repository_files_fts MATCH ?
-        ORDER BY rank
+        ORDER BY
+            CASE
+                WHEN mf.file_path LIKE '%.go' AND mf.file_path NOT LIKE '%_test.go' THEN rank * 2.5
+                WHEN mf.file_path LIKE '%_test.go' THEN rank * 1.8
+                ELSE rank
+            END
         LIMIT ?
     `, match, limit)
 	if err != nil {
@@ -433,26 +449,47 @@ func (db *DB) DeleteRepositoryByID(repositoryID int64) error {
 	return err
 }
 
-func (db *DB) InsertProviderResource(r *ProviderResource) (int64, error) {
+func (db *DB) InsertProviderService(s *ProviderService) (int64, error) {
 	_, err := db.conn.Exec(`
-		INSERT INTO provider_resources (repository_id, name, display_name, kind, file_path, description, deprecation_message, version_added, version_removed, breaking_changes)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO provider_services (repository_id, name, file_path, website_categories, github_label)
+		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(repository_id, name) DO UPDATE SET
-			display_name = excluded.display_name,
-			kind = excluded.kind,
 			file_path = excluded.file_path,
-			description = excluded.description,
-			deprecation_message = excluded.deprecation_message,
-			version_added = excluded.version_added,
-			version_removed = excluded.version_removed,
-			breaking_changes = excluded.breaking_changes
-	`, r.RepositoryID, r.Name, r.DisplayName, r.Kind, r.FilePath, r.Description, r.DeprecationMessage, r.VersionAdded, r.VersionRemoved, r.BreakingChanges)
+			website_categories = excluded.website_categories,
+			github_label = excluded.github_label
+	`, s.RepositoryID, s.Name, s.FilePath, s.WebsiteCategories, s.GitHubLabel)
 	if err != nil {
 		return 0, err
 	}
 
 	var id int64
-	if err := db.conn.QueryRow(`SELECT id FROM provider_resources WHERE repository_id = ? AND name = ?`, r.RepositoryID, r.Name).Scan(&id); err != nil {
+	if err := db.conn.QueryRow(`SELECT id FROM provider_services WHERE repository_id = ? AND name = ?`, s.RepositoryID, s.Name).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+func (db *DB) InsertProviderResource(r *ProviderResource) (int64, error) {
+	_, err := db.conn.Exec(`
+		INSERT INTO provider_resources (repository_id, service_id, name, display_name, kind, file_path, description, deprecation_message, version_added, version_removed, breaking_changes, api_version)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(repository_id, name, kind) DO UPDATE SET
+			service_id = excluded.service_id,
+			display_name = excluded.display_name,
+			file_path = excluded.file_path,
+			description = excluded.description,
+			deprecation_message = excluded.deprecation_message,
+			version_added = excluded.version_added,
+			version_removed = excluded.version_removed,
+			breaking_changes = excluded.breaking_changes,
+			api_version = excluded.api_version
+	`, r.RepositoryID, r.ServiceID, r.Name, r.DisplayName, r.Kind, r.FilePath, r.Description, r.DeprecationMessage, r.VersionAdded, r.VersionRemoved, r.BreakingChanges, r.APIVersion)
+	if err != nil {
+		return 0, err
+	}
+
+	var id int64
+	if err := db.conn.QueryRow(`SELECT id FROM provider_resources WHERE repository_id = ? AND name = ? AND kind = ?`, r.RepositoryID, r.Name, r.Kind).Scan(&id); err != nil {
 		return 0, err
 	}
 	return id, nil
@@ -639,17 +676,17 @@ func (db *DB) GetProviderReleaseByVersion(repositoryID int64, version string) (*
 }
 
 func (db *DB) GetProviderReleaseByTag(repositoryID int64, tag string) (*ProviderRelease, error) {
-    var r ProviderRelease
-    err := db.conn.QueryRow(`
+	var r ProviderRelease
+	err := db.conn.QueryRow(`
         SELECT id, repository_id, version, tag, previous_version, previous_tag,
             commit_sha, previous_commit_sha, release_date, comparison_url, created_at
         FROM provider_releases
         WHERE repository_id = ? AND tag = ?
     `, repositoryID, tag).Scan(&r.ID, &r.RepositoryID, &r.Version, &r.Tag, &r.PreviousVersion, &r.PreviousTag, &r.CommitSHA, &r.PreviousCommitSHA, &r.ReleaseDate, &r.ComparisonURL, &r.CreatedAt)
-    if err != nil {
-        return nil, err
-    }
-    return &r, nil
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
 }
 
 func (db *DB) GetProviderReleaseEntries(releaseID int64) ([]ProviderReleaseEntry, error) {
@@ -715,20 +752,20 @@ func (db *DB) GetReleaseWithEntriesByVersion(repositoryID int64, version string)
 }
 
 func (db *DB) GetReleaseWithEntriesByTag(repositoryID int64, tag string) (*ProviderRelease, []ProviderReleaseEntry, error) {
-    release, err := db.GetProviderReleaseByTag(repositoryID, tag)
-    if err != nil {
-        return nil, nil, err
-    }
-    entries, err := db.GetProviderReleaseEntries(release.ID)
-    if err != nil {
-        return nil, nil, err
-    }
-    return release, entries, nil
+	release, err := db.GetProviderReleaseByTag(repositoryID, tag)
+	if err != nil {
+		return nil, nil, err
+	}
+	entries, err := db.GetProviderReleaseEntries(release.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return release, entries, nil
 }
 
 func (db *DB) ListProviderResources(kind string, limit int) ([]ProviderResource, error) {
 	query := `
-		SELECT id, repository_id, name, display_name, kind, file_path, description, deprecation_message, version_added, version_removed, breaking_changes
+		SELECT id, repository_id, service_id, name, display_name, kind, file_path, description, deprecation_message, version_added, version_removed, breaking_changes, api_version
 		FROM provider_resources`
 	var args []any
 	if kind != "" {
@@ -749,7 +786,7 @@ func (db *DB) ListProviderResources(kind string, limit int) ([]ProviderResource,
 	var resources []ProviderResource
 	for rows.Next() {
 		var r ProviderResource
-		if err := rows.Scan(&r.ID, &r.RepositoryID, &r.Name, &r.DisplayName, &r.Kind, &r.FilePath, &r.Description, &r.DeprecationMessage, &r.VersionAdded, &r.VersionRemoved, &r.BreakingChanges); err != nil {
+		if err := rows.Scan(&r.ID, &r.RepositoryID, &r.ServiceID, &r.Name, &r.DisplayName, &r.Kind, &r.FilePath, &r.Description, &r.DeprecationMessage, &r.VersionAdded, &r.VersionRemoved, &r.BreakingChanges, &r.APIVersion); err != nil {
 			return nil, err
 		}
 		resources = append(resources, r)
@@ -759,10 +796,10 @@ func (db *DB) ListProviderResources(kind string, limit int) ([]ProviderResource,
 
 func (db *DB) SearchProviderResources(query string, limit int) ([]ProviderResource, error) {
 	rows, err := db.conn.Query(`
-		SELECT pr.id, pr.repository_id, pr.name, pr.display_name, pr.kind, pr.file_path, pr.description, pr.deprecation_message, pr.version_added, pr.version_removed, pr.breaking_changes
+		SELECT pr.id, pr.repository_id, pr.service_id, pr.name, pr.display_name, pr.kind, pr.file_path, pr.description, pr.deprecation_message, pr.version_added, pr.version_removed, pr.breaking_changes, pr.api_version
 		FROM provider_resources pr
-		JOIN provider_resources_fts fts ON fts.rowid = pr.id
-		WHERE fts MATCH ?
+		JOIN provider_resources_fts ON provider_resources_fts.rowid = pr.id
+		WHERE provider_resources_fts MATCH ?
 		ORDER BY rank
 		LIMIT ?
 	`, escapeFTS5(query), limit)
@@ -774,7 +811,7 @@ func (db *DB) SearchProviderResources(query string, limit int) ([]ProviderResour
 	var resources []ProviderResource
 	for rows.Next() {
 		var r ProviderResource
-		if err := rows.Scan(&r.ID, &r.RepositoryID, &r.Name, &r.DisplayName, &r.Kind, &r.FilePath, &r.Description, &r.DeprecationMessage, &r.VersionAdded, &r.VersionRemoved, &r.BreakingChanges); err != nil {
+		if err := rows.Scan(&r.ID, &r.RepositoryID, &r.ServiceID, &r.Name, &r.DisplayName, &r.Kind, &r.FilePath, &r.Description, &r.DeprecationMessage, &r.VersionAdded, &r.VersionRemoved, &r.BreakingChanges, &r.APIVersion); err != nil {
 			return nil, err
 		}
 		resources = append(resources, r)
@@ -784,11 +821,14 @@ func (db *DB) SearchProviderResources(query string, limit int) ([]ProviderResour
 
 func (db *DB) GetProviderResource(name string) (*ProviderResource, error) {
 	var r ProviderResource
+	// When a name exists as both resource and data_source, prefer the resource
 	err := db.conn.QueryRow(`
-		SELECT id, repository_id, name, display_name, kind, file_path, description, deprecation_message, version_added, version_removed, breaking_changes
+		SELECT id, repository_id, service_id, name, display_name, kind, file_path, description, deprecation_message, version_added, version_removed, breaking_changes, api_version
 		FROM provider_resources
 		WHERE name = ?
-	`, name).Scan(&r.ID, &r.RepositoryID, &r.Name, &r.DisplayName, &r.Kind, &r.FilePath, &r.Description, &r.DeprecationMessage, &r.VersionAdded, &r.VersionRemoved, &r.BreakingChanges)
+		ORDER BY CASE kind WHEN 'resource' THEN 0 WHEN 'data_source' THEN 1 ELSE 2 END
+		LIMIT 1
+	`, name).Scan(&r.ID, &r.RepositoryID, &r.ServiceID, &r.Name, &r.DisplayName, &r.Kind, &r.FilePath, &r.Description, &r.DeprecationMessage, &r.VersionAdded, &r.VersionRemoved, &r.BreakingChanges, &r.APIVersion)
 	if err != nil {
 		return nil, err
 	}

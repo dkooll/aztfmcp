@@ -20,9 +20,9 @@ func ReleaseSummary(repoFullName string, release *database.ProviderRelease, entr
 
 	var b strings.Builder
 	b.WriteString("Incremental Provider Sync Summary\n")
-	b.WriteString(fmt.Sprintf("- Repository: %s\n", name))
-	b.WriteString(fmt.Sprintf("- Range: %s\n", renderRange(release)))
-	b.WriteString(fmt.Sprintf("- Date: %s\n", releaseDateOrFallback(release)))
+	fmt.Fprintf(&b, "- Repository: %s\n", name)
+	fmt.Fprintf(&b, "- Range: %s\n", renderRange(release))
+	fmt.Fprintf(&b, "- Date: %s\n", releaseDateOrFallback(release))
 
 	sections := groupEntriesBySection(entries)
 	if len(sections.order) == 0 {
@@ -31,9 +31,9 @@ func ReleaseSummary(repoFullName string, release *database.ProviderRelease, entr
 	}
 
 	for _, section := range sections.order {
-		b.WriteString(fmt.Sprintf("- %s\n", section))
+		fmt.Fprintf(&b, "- %s\n", section)
 		for _, title := range sections.entries[section] {
-			b.WriteString(fmt.Sprintf("    - %s\n", title))
+			fmt.Fprintf(&b, "    - %s\n", title)
 		}
 	}
 

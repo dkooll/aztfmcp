@@ -40,9 +40,15 @@ type ToolCallParams struct {
 	Arguments any    `json:"arguments"`
 }
 
+type Syncer interface {
+	SyncAll() (*indexer.SyncProgress, error)
+	SyncUpdates() (*indexer.SyncProgress, error)
+	CompareTags(baseTag, headTag string) (*indexer.GitHubCompareResult, error)
+}
+
 type Server struct {
 	db        *database.DB
-	syncer    *indexer.Syncer
+	syncer    Syncer
 	writer    io.Writer
 	jobs      map[string]*SyncJob
 	jobsMutex sync.RWMutex
@@ -250,6 +256,13 @@ func (s *Server) handleToolsList(msg Message) {
 						"type":        "string",
 						"description": "Optional provider version (e.g. 4.52.0). Defaults to the latest synced release.",
 					},
+					"fields": map[string]any{
+						"type":        "array",
+						"description": "Optional fields to include (e.g., header, entries)",
+						"items": map[string]any{
+							"type": "string",
+						},
+					},
 				},
 			},
 		},
@@ -270,6 +283,13 @@ func (s *Server) handleToolsList(msg Message) {
 					"max_context_lines": map[string]any{
 						"type":        "integer",
 						"description": "Optional limit for diff lines (default 24)",
+					},
+					"fields": map[string]any{
+						"type":        "array",
+						"description": "Optional fields to include: header, file, diff, compare_url",
+						"items": map[string]any{
+							"type": "string",
+						},
 					},
 				},
 				"required": []string{"version", "query"},
@@ -299,6 +319,10 @@ func (s *Server) handleToolsList(msg Message) {
 						"type":        "string",
 						"description": "Optional filter: resource | data_source",
 					},
+					"compact": map[string]any{
+						"type":        "boolean",
+						"description": "Return a compact list (names/paths only)",
+					},
 					"limit": map[string]any{
 						"type":        "number",
 						"description": "Optional maximum results",
@@ -315,6 +339,10 @@ func (s *Server) handleToolsList(msg Message) {
 					"query": map[string]any{
 						"type":        "string",
 						"description": "Search query (supports boolean operators)",
+					},
+					"compact": map[string]any{
+						"type":        "boolean",
+						"description": "Return a compact list (names/paths only)",
 					},
 					"limit": map[string]any{
 						"type":        "number",
@@ -354,7 +382,7 @@ func (s *Server) handleToolsList(msg Message) {
 					},
 					"max_rows": map[string]any{
 						"type":        "number",
-						"description": "Limit the number of attributes returned",
+						"description": "Limit the number of attributes returned (default 50, use -1 for all)",
 					},
 					"compact": map[string]any{
 						"type":        "boolean",
@@ -392,6 +420,10 @@ func (s *Server) handleToolsList(msg Message) {
 					"description_query": map[string]any{
 						"type":        "string",
 						"description": "Substring applied to attribute descriptions",
+					},
+					"compact": map[string]any{
+						"type":        "boolean",
+						"description": "Return a compact list (resource.attribute only)",
 					},
 					"limit": map[string]any{
 						"type":        "number",
@@ -460,7 +492,11 @@ func (s *Server) handleToolsList(msg Message) {
 					},
 					"end_line": map[string]any{
 						"type":        "number",
-						"description": "Optional ending line number (inclusive)",
+						"description": "Optional ending line number (inclusive, 0 for default window, -1 for full file)",
+					},
+					"summary": map[string]any{
+						"type":        "boolean",
+						"description": "Only return file metadata and line window info, omit content",
 					},
 				},
 				"required": []string{"file_path"},
@@ -586,6 +622,10 @@ func (s *Server) handleToolsList(msg Message) {
 					"resource_b": map[string]any{
 						"type":        "string",
 						"description": "Second resource name",
+					},
+					"max_names": map[string]any{
+						"type":        "number",
+						"description": "Maximum attribute names to list per section (default 30, use -1 for all)",
 					},
 				},
 				"required": []string{"resource_a", "resource_b"},
@@ -835,13 +875,15 @@ func (s *Server) handleListResources(args any) map[string]any {
 	}
 
 	params, err := UnmarshalArgs[struct {
-		Kind  string `json:"kind"`
-		Limit int    `json:"limit"`
+		Kind    string `json:"kind"`
+		Limit   int    `json:"limit"`
+		Compact bool   `json:"compact"`
 	}](args)
 	if err != nil {
 		params = struct {
-			Kind  string `json:"kind"`
-			Limit int    `json:"limit"`
+			Kind    string `json:"kind"`
+			Limit   int    `json:"limit"`
+			Compact bool   `json:"compact"`
 		}{}
 	}
 
@@ -850,12 +892,22 @@ func (s *Server) handleListResources(args any) map[string]any {
 		return ErrorResponse("kind must be 'resource' or 'data_source'")
 	}
 
-	resources, err := s.db.ListProviderResources(kind, params.Limit)
+	limit := params.Limit
+	if limit == 0 {
+		limit = 50 // default cap to avoid large responses
+	} else if limit < 0 {
+		limit = 0 // negative keeps legacy “no limit” behavior
+	}
+
+	resources, err := s.db.ListProviderResources(kind, limit)
 	if err != nil {
 		return ErrorResponse(fmt.Sprintf("Failed to load provider resources: %v", err))
 	}
 
 	text := formatter.ProviderResourceList(resources)
+	if params.Compact {
+		text = formatter.ProviderResourceListCompact(resources)
+	}
 	return SuccessResponse(text)
 }
 
@@ -865,8 +917,9 @@ func (s *Server) handleSearchResources(args any) map[string]any {
 	}
 
 	params, err := UnmarshalArgs[struct {
-		Query string `json:"query"`
-		Limit int    `json:"limit"`
+		Query   string `json:"query"`
+		Limit   int    `json:"limit"`
+		Compact bool   `json:"compact"`
 	}](args)
 	if err != nil || strings.TrimSpace(params.Query) == "" {
 		return ErrorResponse("query is required")
@@ -882,6 +935,9 @@ func (s *Server) handleSearchResources(args any) map[string]any {
 	}
 
 	text := formatter.ProviderResourceList(resources)
+	if params.Compact {
+		text = formatter.ProviderResourceListCompact(resources)
+	}
 	return SuccessResponse(text)
 }
 
@@ -900,6 +956,12 @@ func (s *Server) handleGetResourceSchema(args any) map[string]any {
 	}](args)
 	if err != nil || strings.TrimSpace(params.Name) == "" {
 		return ErrorResponse("name is required")
+	}
+
+	if params.MaxRows == 0 {
+		params.MaxRows = 50 // default cap for readability
+	} else if params.MaxRows < 0 {
+		params.MaxRows = 0 // no cap
 	}
 
 	resourceName := strings.TrimSpace(params.Name)
@@ -942,10 +1004,17 @@ func (s *Server) handleSearchResourceAttributes(args any) map[string]any {
 		Flags            []string `json:"flags"`
 		ConflictsWith    string   `json:"conflicts_with"`
 		DescriptionQuery string   `json:"description_query"`
+		Compact          bool     `json:"compact"`
 		Limit            int      `json:"limit"`
 	}](args)
 	if err != nil {
 		return ErrorResponse("Error: invalid filter parameters")
+	}
+
+	if params.Limit == 0 {
+		params.Limit = 20
+	} else if params.Limit < 0 {
+		params.Limit = 0 // no limit
 	}
 
 	results, err := s.db.SearchProviderAttributes(database.AttributeSearchFilters{
@@ -961,6 +1030,9 @@ func (s *Server) handleSearchResourceAttributes(args any) map[string]any {
 	}
 
 	text := formatter.ProviderAttributeSearch(results)
+	if params.Compact {
+		text = formatter.ProviderAttributeSearchCompact(results)
+	}
 	return SuccessResponse(text)
 }
 
@@ -1186,6 +1258,7 @@ func (s *Server) handleGetFileContent(args any) map[string]any {
 		FilePath   string `json:"file_path"`
 		StartLine  int    `json:"start_line"`
 		EndLine    int    `json:"end_line"`
+		Summary    bool   `json:"summary"`
 	}](args)
 	if err != nil {
 		return ErrorResponse("Error: Invalid parameters")
@@ -1214,8 +1287,21 @@ func (s *Server) handleGetFileContent(args any) map[string]any {
 		return ErrorResponse(fmt.Sprintf("File '%s' not found in repository '%s'", fileArgs.FilePath, repo.Name))
 	}
 
-	snippet, startLine, endLine, totalLines := extractLineWindow(file.Content, fileArgs.StartLine, fileArgs.EndLine)
-	text := formatter.FileContent(repo.Name, file.FilePath, file.FileType, file.SizeBytes, snippet, startLine, endLine, totalLines)
+	startLine := fileArgs.StartLine
+	endLine := fileArgs.EndLine
+	if startLine == 0 && endLine == 0 {
+		startLine = 1
+		endLine = 200 // default window to avoid dumping entire files
+	}
+	if startLine < 0 {
+		startLine = 1
+	}
+	if endLine < 0 {
+		endLine = 0 // treat as full file
+	}
+
+	snippet, startLine, endLine, totalLines := extractLineWindow(file.Content, startLine, endLine)
+	text := formatter.FileContent(repo.Name, file.FilePath, file.FileType, file.SizeBytes, snippet, startLine, endLine, totalLines, !fileArgs.Summary)
 	return SuccessResponse(text)
 }
 
@@ -1465,26 +1551,56 @@ func (s *Server) handleGetExample(args any) map[string]any {
 }
 
 func findDocumentationFile(files []database.RepositoryFile, suffix string, kind string) *database.RepositoryFile {
-	fileName := strings.TrimSpace(suffix) + ".md"
-	if fileName == ".md" {
+	suffix = strings.TrimSpace(suffix)
+	if suffix == "" {
 		return nil
 	}
 
-	primary := "docs/resources/"
-	if strings.TrimSpace(kind) == "data_source" {
-		primary = "docs/data-sources/"
+	// Determine which patterns to try based on resource kind
+	var searchPatterns []struct {
+		prefix string
+		suffix string
 	}
-
-	for i := range files {
-		f := &files[i]
-		if strings.HasPrefix(f.FilePath, primary) && strings.HasSuffix(f.FilePath, "/"+fileName) {
-			return f
+	if strings.TrimSpace(kind) == "data_source" {
+		// For data sources, prioritize d/ paths
+		searchPatterns = []struct {
+			prefix string
+			suffix string
+		}{
+			{"website/docs/d/", suffix + ".html.markdown"},
+			{"docs/data-sources/", suffix + ".md"},
+			{"website/docs/r/", suffix + ".html.markdown"},
+			{"docs/resources/", suffix + ".md"},
+		}
+	} else {
+		// For resources, prioritize r/ paths
+		searchPatterns = []struct {
+			prefix string
+			suffix string
+		}{
+			{"website/docs/r/", suffix + ".html.markdown"},
+			{"docs/resources/", suffix + ".md"},
+			{"website/docs/d/", suffix + ".html.markdown"},
+			{"docs/data-sources/", suffix + ".md"},
 		}
 	}
 
+	// Search for documentation file
+	for _, pattern := range searchPatterns {
+		for i := range files {
+			f := &files[i]
+			expectedPath := pattern.prefix + pattern.suffix
+			if f.FilePath == expectedPath {
+				return f
+			}
+		}
+	}
+
+	// Fallback: search any docs/ path
 	for i := range files {
 		f := &files[i]
-		if strings.HasPrefix(f.FilePath, "docs/") && strings.HasSuffix(f.FilePath, "/"+fileName) {
+		if strings.Contains(f.FilePath, "docs/") &&
+			(strings.HasSuffix(f.FilePath, suffix+".md") || strings.HasSuffix(f.FilePath, suffix+".html.markdown")) {
 			return f
 		}
 	}

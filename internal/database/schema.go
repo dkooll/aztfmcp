@@ -82,9 +82,24 @@ CREATE TRIGGER IF NOT EXISTS repository_files_fts_delete AFTER DELETE ON reposit
     DELETE FROM repository_files_fts WHERE rowid = old.id;
 END;
 
+CREATE TABLE IF NOT EXISTS provider_services (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    repository_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    file_path TEXT,
+    website_categories TEXT,
+    github_label TEXT,
+    FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE,
+    UNIQUE(repository_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_provider_services_name ON provider_services(name);
+CREATE INDEX IF NOT EXISTS idx_provider_services_github_label ON provider_services(github_label);
+
 CREATE TABLE IF NOT EXISTS provider_resources (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     repository_id INTEGER NOT NULL,
+    service_id INTEGER,
     name TEXT NOT NULL,
     display_name TEXT,
     kind TEXT NOT NULL,
@@ -94,8 +109,10 @@ CREATE TABLE IF NOT EXISTS provider_resources (
     version_added TEXT,
     version_removed TEXT,
     breaking_changes TEXT,
+    api_version TEXT,
     FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE,
-    UNIQUE(repository_id, name)
+    FOREIGN KEY (service_id) REFERENCES provider_services(id) ON DELETE SET NULL,
+    UNIQUE(repository_id, name, kind)
 );
 
 CREATE INDEX IF NOT EXISTS idx_provider_resources_name ON provider_resources(name);

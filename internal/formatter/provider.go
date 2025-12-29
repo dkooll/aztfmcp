@@ -15,7 +15,7 @@ type SchemaRenderOptions struct {
 
 func ProviderResourceList(resources []database.ProviderResource) string {
 	var text strings.Builder
-	text.WriteString(fmt.Sprintf("# AzureRM Provider Definitions (%d)\n\n", len(resources)))
+	fmt.Fprintf(&text, "# AzureRM Provider Definitions (%d)\n\n", len(resources))
 
 	if len(resources) == 0 {
 		text.WriteString("No provider resources indexed. Run sync_provider to load the repository.\n")
@@ -27,19 +27,33 @@ func ProviderResourceList(resources []database.ProviderResource) string {
 		if resource.DisplayName.Valid {
 			title = fmt.Sprintf("%s (%s)", resource.DisplayName.String, resource.Name)
 		}
-		text.WriteString(fmt.Sprintf("**%s** — %s\n", title, resource.Kind))
+		fmt.Fprintf(&text, "**%s** — %s\n", title, resource.Kind)
 		if resource.Description.Valid {
-			text.WriteString(fmt.Sprintf("  %s\n", resource.Description.String))
+			fmt.Fprintf(&text, "  %s\n", resource.Description.String)
 		}
 		if resource.FilePath.Valid {
-			text.WriteString(fmt.Sprintf("  File: %s\n", resource.FilePath.String))
+			fmt.Fprintf(&text, "  File: %s\n", resource.FilePath.String)
 		}
 		if resource.DeprecationMessage.Valid {
-			text.WriteString(fmt.Sprintf("  ⚠️ Deprecated: %s\n", resource.DeprecationMessage.String))
+			fmt.Fprintf(&text, "  ⚠️ Deprecated: %s\n", resource.DeprecationMessage.String)
 		}
 		text.WriteString("\n")
 	}
 
+	return text.String()
+}
+
+func ProviderResourceListCompact(resources []database.ProviderResource) string {
+	var text strings.Builder
+	fmt.Fprintf(&text, "Resources: %d\n", len(resources))
+	for _, resource := range resources {
+		kind := resource.Kind
+		line := resource.Name
+		if resource.FilePath.Valid {
+			line = fmt.Sprintf("%s (%s)", resource.Name, resource.FilePath.String)
+		}
+		fmt.Fprintf(&text, "- %s [%s]\n", line, kind)
+	}
 	return text.String()
 }
 
@@ -49,20 +63,20 @@ func ProviderResourceDetail(resource *database.ProviderResource, attrs []databas
 	if resource.DisplayName.Valid {
 		title = fmt.Sprintf("%s (%s)", resource.DisplayName.String, resource.Name)
 	}
-	text.WriteString(fmt.Sprintf("# %s\n\n", title))
+	fmt.Fprintf(&text, "# %s\n\n", title)
 	kindLabel := "Resource"
 	if resource.Kind == "data_source" {
 		kindLabel = "Data Source"
 	}
-	text.WriteString(fmt.Sprintf("**Kind:** %s\n", kindLabel))
+	fmt.Fprintf(&text, "**Kind:** %s\n", kindLabel)
 	if resource.FilePath.Valid {
-		text.WriteString(fmt.Sprintf("**File:** %s\n", resource.FilePath.String))
+		fmt.Fprintf(&text, "**File:** %s\n", resource.FilePath.String)
 	}
 	if resource.Description.Valid {
-		text.WriteString(fmt.Sprintf("**Description:** %s\n", resource.Description.String))
+		fmt.Fprintf(&text, "**Description:** %s\n", resource.Description.String)
 	}
 	if resource.DeprecationMessage.Valid {
-		text.WriteString(fmt.Sprintf("**Deprecation:** %s\n", resource.DeprecationMessage.String))
+		fmt.Fprintf(&text, "**Deprecation:** %s\n", resource.DeprecationMessage.String)
 	}
 	text.WriteString("\n")
 
@@ -73,7 +87,7 @@ func ProviderResourceDetail(resource *database.ProviderResource, attrs []databas
 	}
 
 	if opts.FilterSummary != "" {
-		text.WriteString(fmt.Sprintf("_Filters applied_: %s\n\n", opts.FilterSummary))
+		fmt.Fprintf(&text, "_Filters applied_: %s\n\n", opts.FilterSummary)
 	}
 
 	text.WriteString(formatAttributesSection(attrs, opts))
@@ -83,7 +97,7 @@ func ProviderResourceDetail(resource *database.ProviderResource, attrs []databas
 
 func formatAttributesSection(attrs []database.ProviderAttribute, opts SchemaRenderOptions) string {
 	var text strings.Builder
-	text.WriteString(fmt.Sprintf("## Attributes (%d)\n\n", len(attrs)))
+	fmt.Fprintf(&text, "## Attributes (%d)\n\n", len(attrs))
 
 	if len(attrs) == 0 {
 		if opts.Filtered {
@@ -101,7 +115,7 @@ func formatAttributesSection(attrs []database.ProviderAttribute, opts SchemaRend
 			if flags == "" {
 				flags = "-"
 			}
-			text.WriteString(fmt.Sprintf("- `%s` (%s) — %s\n", attr.Name, flags, desc))
+			fmt.Fprintf(&text, "- `%s` (%s) — %s\n", attr.Name, flags, desc)
 		}
 		text.WriteString("\n")
 		return text.String()
@@ -119,12 +133,12 @@ func formatAttributesSection(attrs []database.ProviderAttribute, opts SchemaRend
 			flags = "-"
 		}
 		desc := attributeDescription(attr)
-		text.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n",
+		fmt.Fprintf(&text, "| %s | %s | %s | %s |\n",
 			attr.Name,
 			escapePipes(typeLabel),
 			escapePipes(flags),
 			escapePipes(desc),
-		))
+		)
 	}
 	text.WriteString("\n")
 	return text.String()
@@ -227,7 +241,7 @@ func escapePipes(value string) string {
 
 func ProviderAttributeSearch(results []database.ProviderAttributeSearchResult) string {
 	var text strings.Builder
-	text.WriteString(fmt.Sprintf("# Attribute Search (%d matches)\n\n", len(results)))
+	fmt.Fprintf(&text, "# Attribute Search (%d matches)\n\n", len(results))
 
 	if len(results) == 0 {
 		text.WriteString("No provider attributes matched the supplied filters.\n")
@@ -255,15 +269,24 @@ func ProviderAttributeSearch(results []database.ProviderAttributeSearchResult) s
 		if res.ResourceFilePath.Valid {
 			notes = fmt.Sprintf("%s — %s", notes, res.ResourceFilePath.String)
 		}
-		text.WriteString(fmt.Sprintf("| %s | `%s` | %s | %s |\n",
+		fmt.Fprintf(&text, "| %s | `%s` | %s | %s |\n",
 			resourceLabel,
 			res.Attribute.Name,
 			escapePipes(flags),
 			escapePipes(notes),
-		))
+		)
 	}
 
 	text.WriteString("\n")
+	return text.String()
+}
+
+func ProviderAttributeSearchCompact(results []database.ProviderAttributeSearchResult) string {
+	var text strings.Builder
+	fmt.Fprintf(&text, "Attribute matches: %d\n", len(results))
+	for _, res := range results {
+		fmt.Fprintf(&text, "- %s.%s [%s]\n", res.ResourceName, res.Attribute.Name, res.ResourceKind)
+	}
 	return text.String()
 }
 
@@ -276,14 +299,14 @@ func ProviderSchemaSource(resourceName, section, filePath, functionName, snippet
 		sectionTitle = strings.ToUpper(sectionTitle[:1]) + sectionTitle[1:]
 	}
 
-	text.WriteString(fmt.Sprintf("# %s %s Source\n\n", resourceName, sectionTitle))
+	fmt.Fprintf(&text, "# %s %s Source\n\n", resourceName, sectionTitle)
 	if filePath != "" {
-		text.WriteString(fmt.Sprintf("**File:** %s\n", filePath))
+		fmt.Fprintf(&text, "**File:** %s\n", filePath)
 	}
 	if functionName != "" {
-		text.WriteString(fmt.Sprintf("**Function:** %s\n", functionName))
+		fmt.Fprintf(&text, "**Function:** %s\n", functionName)
 	}
-	text.WriteString(fmt.Sprintf("**Section:** %s\n\n", sectionTitle))
+	fmt.Fprintf(&text, "**Section:** %s\n\n", sectionTitle)
 
 	if strings.TrimSpace(snippet) == "" {
 		text.WriteString("Snippet not available. Run `get_file_content` to inspect the file directly.\n")

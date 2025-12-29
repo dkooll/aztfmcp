@@ -6,68 +6,102 @@ import (
 	"strings"
 
 	"github.com/dkooll/aztfmcp/internal/database"
+	"github.com/dkooll/aztfmcp/internal/formatter"
 )
 
 func (s *Server) handleAnalyzeUpdateBehavior(args any) map[string]any {
+	if err := s.ensureDB(); err != nil {
+		return ErrorResponse(fmt.Sprintf("Failed to initialize database: %v", err))
+	}
+
 	argsMap, ok := args.(map[string]any)
 	if !ok {
-		return map[string]any{"error": "Invalid arguments"}
+		return ErrorResponse("Invalid arguments")
 	}
 
 	resourceName, _ := argsMap["resource_name"].(string)
 	attributePath, _ := argsMap["attribute_path"].(string)
 
 	if resourceName == "" || attributePath == "" {
-		return map[string]any{"error": "resource_name and attribute_path are required"}
+		return ErrorResponse("resource_name and attribute_path are required")
 	}
 
 	resource, err := s.db.GetProviderResource(resourceName)
 	if err != nil {
-		return map[string]any{"error": fmt.Sprintf("Resource not found: %v", err)}
+		return ErrorResponse(fmt.Sprintf("Resource not found: %v", err))
 	}
 
 	attrs, err := s.db.GetProviderResourceAttributes(resource.ID)
 	if err != nil {
-		return map[string]any{"error": fmt.Sprintf("Failed to get attributes: %v", err)}
+		return ErrorResponse(fmt.Sprintf("Failed to get attributes: %v", err))
 	}
 
-	var targetAttr *database.ProviderAttribute
-	for _, attr := range attrs {
-		if attr.Name == attributePath || strings.HasPrefix(attributePath, attr.Name+".") {
-			targetAttr = &attr
-			break
+	findAttr := func(path string) *database.ProviderAttribute {
+		for _, attr := range attrs {
+			if attr.Name == path || strings.HasPrefix(path, attr.Name+".") {
+				return &attr
+			}
+		}
+		return nil
+	}
+
+	targetAttr := findAttr(attributePath)
+
+	if targetAttr == nil {
+		if base, found := strings.CutSuffix(attributePath, "_id"); found {
+			targetAttr = findAttr(base)
+		} else {
+			targetAttr = findAttr(attributePath + "_id")
 		}
 	}
 
 	if targetAttr == nil {
-		return map[string]any{"error": fmt.Sprintf("Attribute '%s' not found in resource", attributePath)}
+		var suggestions []string
+		for _, attr := range attrs {
+			tag := "update_in_place"
+			if attr.ForceNew {
+				tag = "forces_recreation"
+			}
+			suggestions = append(suggestions, fmt.Sprintf("- %s (%s)", attr.Name, tag))
+		}
+
+		text := fmt.Sprintf(
+			"# Update Behavior: %s.%s\n\nAttribute '%s' not found in resource schema.\n\nClosest available attributes (ForceNew/in-place):\n%s\n",
+			resourceName, attributePath, attributePath, strings.Join(suggestions, "\n"),
+		)
+		return SuccessResponse(text)
 	}
 
 	source, _ := s.db.GetProviderResourceSource(resource.ID)
 	hasCustomDiff := source != nil && source.CustomizeDiffSnippet.Valid && source.CustomizeDiffSnippet.String != ""
 
-	analysis := map[string]any{
-		"resource":            resourceName,
-		"attribute":           attributePath,
-		"can_update_in_place": !targetAttr.ForceNew,
-		"requires_recreation": targetAttr.ForceNew,
-		"is_computed":         targetAttr.Computed,
-		"is_optional":         targetAttr.Optional,
-		"is_required":         targetAttr.Required,
-		"explanation":         explainWhyBreaking(*targetAttr, resourceName),
-		"workaround":          suggestWorkaround(*targetAttr),
-		"has_custom_diff":     hasCustomDiff,
+	customDiffSnippet := ""
+	if hasCustomDiff && source.CustomizeDiffSnippet.Valid {
+		customDiffSnippet = source.CustomizeDiffSnippet.String
 	}
 
-	if hasCustomDiff {
-		analysis["custom_diff_note"] = "This resource has CustomizeDiff logic that may allow conditional updates"
-		analysis["custom_diff_snippet"] = source.CustomizeDiffSnippet.String
-	}
+	text := formatter.UpdateBehaviorAnalysis(
+		resourceName,
+		attributePath,
+		!targetAttr.ForceNew,
+		targetAttr.ForceNew,
+		targetAttr.Computed,
+		targetAttr.Optional,
+		targetAttr.Required,
+		explainWhyBreaking(*targetAttr, resourceName),
+		suggestWorkaround(*targetAttr),
+		hasCustomDiff,
+		customDiffSnippet,
+	)
 
-	return map[string]any{"result": analysis}
+	return SuccessResponse(text)
 }
 
 func (s *Server) handleCompareResources(args any) map[string]any {
+	if err := s.ensureDB(); err != nil {
+		return ErrorResponse(fmt.Sprintf("Failed to initialize database: %v", err))
+	}
+
 	argsMap, ok := args.(map[string]any)
 	if !ok {
 		return map[string]any{"error": "Invalid arguments"}
@@ -75,6 +109,14 @@ func (s *Server) handleCompareResources(args any) map[string]any {
 
 	resourceA, _ := argsMap["resource_a"].(string)
 	resourceB, _ := argsMap["resource_b"].(string)
+	maxNames := 30
+	if v, ok := argsMap["max_names"].(float64); ok {
+		if v < 0 {
+			maxNames = 0
+		} else if v > 0 {
+			maxNames = int(v)
+		}
+	}
 
 	if resourceA == "" || resourceB == "" {
 		return map[string]any{"error": "resource_a and resource_b are required"}
@@ -97,6 +139,10 @@ func (s *Server) handleCompareResources(args any) map[string]any {
 	uniqueA := findUniqueAttributes(attrsA, attrsB)
 	uniqueB := findUniqueAttributes(attrsB, attrsA)
 
+	commonTrimmed, commonTruncated := trimStrings(common, maxNames)
+	uniqueATrimmed, aTruncated := trimStrings(uniqueA, maxNames)
+	uniqueBTrimmed, bTruncated := trimStrings(uniqueB, maxNames)
+
 	similarity := calculateJaccardSimilarity(attrsA, attrsB)
 
 	forceNewA := 0
@@ -112,26 +158,31 @@ func (s *Server) handleCompareResources(args any) map[string]any {
 		}
 	}
 
-	comparison := map[string]any{
-		"resource_a":        resourceA,
-		"resource_b":        resourceB,
-		"similarity_score":  fmt.Sprintf("%.2f%%", similarity*100),
-		"total_attrs_a":     len(attrsA),
-		"total_attrs_b":     len(attrsB),
-		"common_attributes": len(common),
-		"unique_to_a":       len(uniqueA),
-		"unique_to_b":       len(uniqueB),
-		"force_new_count_a": forceNewA,
-		"force_new_count_b": forceNewB,
-		"common_attr_names": common,
-		"unique_to_a_names": uniqueA,
-		"unique_to_b_names": uniqueB,
-	}
+	text := formatter.ResourceComparison(
+		resourceA,
+		resourceB,
+		similarity,
+		len(attrsA),
+		len(attrsB),
+		len(common),
+		len(uniqueA),
+		len(uniqueB),
+		forceNewA,
+		forceNewB,
+		commonTrimmed,
+		uniqueATrimmed,
+		uniqueBTrimmed,
+		commonTruncated || aTruncated || bTruncated,
+	)
 
-	return map[string]any{"result": comparison}
+	return SuccessResponse(text)
 }
 
 func (s *Server) handleFindSimilarResources(args any) map[string]any {
+	if err := s.ensureDB(); err != nil {
+		return ErrorResponse(fmt.Sprintf("Failed to initialize database: %v", err))
+	}
+
 	argsMap, ok := args.(map[string]any)
 	if !ok {
 		return map[string]any{"error": "Invalid arguments"}
@@ -198,27 +249,31 @@ func (s *Server) handleFindSimilarResources(args any) map[string]any {
 		similarities = similarities[:limit]
 	}
 
-	results := []map[string]any{}
-	for _, sim := range similarities {
-		results = append(results, map[string]any{
-			"resource_name":      sim.Resource.Name,
-			"similarity_score":   fmt.Sprintf("%.2f%%", sim.Score*100),
-			"common_attrs_count": len(sim.CommonAttributes),
-			"file_path":          sim.Resource.FilePath.String,
-		})
+	formatterResources := make([]formatter.SimilarResource, len(similarities))
+	for i, sim := range similarities {
+		formatterResources[i] = formatter.SimilarResource{
+			Name:            sim.Resource.Name,
+			SimilarityScore: sim.Score,
+			CommonAttrCount: len(sim.CommonAttributes),
+			FilePath:        sim.Resource.FilePath.String,
+		}
 	}
 
-	return map[string]any{
-		"result": map[string]any{
-			"target_resource":   resourceName,
-			"threshold":         threshold,
-			"matches_found":     len(results),
-			"similar_resources": results,
-		},
-	}
+	text := formatter.SimilarResources(
+		resourceName,
+		threshold,
+		len(similarities),
+		formatterResources,
+	)
+
+	return SuccessResponse(text)
 }
 
 func (s *Server) handleExplainBreakingChange(args any) map[string]any {
+	if err := s.ensureDB(); err != nil {
+		return ErrorResponse(fmt.Sprintf("Failed to initialize database: %v", err))
+	}
+
 	argsMap, ok := args.(map[string]any)
 	if !ok {
 		return map[string]any{"error": "Invalid arguments"}
@@ -253,25 +308,31 @@ func (s *Server) handleExplainBreakingChange(args any) map[string]any {
 		return map[string]any{"error": fmt.Sprintf("Attribute '%s' not found", attributeName)}
 	}
 
-	explanation := map[string]any{
-		"resource":    resourceName,
-		"attribute":   attributeName,
-		"is_breaking": targetAttr.ForceNew,
-		"reason":      explainWhyBreaking(*targetAttr, resourceName),
-		"workaround":  suggestWorkaround(*targetAttr),
-		"required":    targetAttr.Required,
-		"optional":    targetAttr.Optional,
-		"computed":    targetAttr.Computed,
+	deprecationNotice := ""
+	if targetAttr.Deprecated.Valid {
+		deprecationNotice = targetAttr.Deprecated.String
 	}
 
-	if targetAttr.Deprecated.Valid && targetAttr.Deprecated.String != "" {
-		explanation["deprecation_notice"] = targetAttr.Deprecated.String
-	}
+	text := formatter.BreakingChangeExplanation(
+		resourceName,
+		attributeName,
+		targetAttr.ForceNew,
+		explainWhyBreaking(*targetAttr, resourceName),
+		suggestWorkaround(*targetAttr),
+		targetAttr.Required,
+		targetAttr.Optional,
+		targetAttr.Computed,
+		deprecationNotice,
+	)
 
-	return map[string]any{"result": explanation}
+	return SuccessResponse(text)
 }
 
 func (s *Server) handleSuggestValidationImprovements(args any) map[string]any {
+	if err := s.ensureDB(); err != nil {
+		return ErrorResponse(fmt.Sprintf("Failed to initialize database: %v", err))
+	}
+
 	argsMap, ok := args.(map[string]any)
 	if !ok {
 		return map[string]any{"error": "Invalid arguments"}
@@ -337,26 +398,31 @@ func (s *Server) handleSuggestValidationImprovements(args any) map[string]any {
 		}
 	}
 
-	result := map[string]any{
-		"resource":          resourceName,
-		"total_attributes":  len(attrs),
-		"suggestions_count": len(suggestions),
-		"suggestions":       []map[string]any{},
+	formatterSuggestions := make([]formatter.ValidationSuggestion, len(suggestions))
+	for i, sugg := range suggestions {
+		formatterSuggestions[i] = formatter.ValidationSuggestion{
+			Attribute:  sugg.Attribute,
+			Issue:      sugg.Issue,
+			Suggestion: sugg.Suggestion,
+			Example:    sugg.Example,
+		}
 	}
 
-	for _, sugg := range suggestions {
-		result["suggestions"] = append(result["suggestions"].([]map[string]any), map[string]any{
-			"attribute":  sugg.Attribute,
-			"issue":      sugg.Issue,
-			"suggestion": sugg.Suggestion,
-			"example":    sugg.Example,
-		})
-	}
+	text := formatter.ValidationSuggestions(
+		resourceName,
+		len(attrs),
+		len(suggestions),
+		formatterSuggestions,
+	)
 
-	return map[string]any{"result": result}
+	return SuccessResponse(text)
 }
 
 func (s *Server) handleTraceAttributeDependencies(args any) map[string]any {
+	if err := s.ensureDB(); err != nil {
+		return ErrorResponse(fmt.Sprintf("Failed to initialize database: %v", err))
+	}
+
 	argsMap, ok := args.(map[string]any)
 	if !ok {
 		return map[string]any{"error": "Invalid arguments"}
@@ -411,19 +477,26 @@ func (s *Server) handleTraceAttributeDependencies(args any) map[string]any {
 		requiredWith = parseConflictsList(targetAttr.RequiredWith.String)
 	}
 
-	dependencies := map[string]any{
-		"resource":                 resourceName,
-		"attribute":                attributeName,
-		"conflicts_with":           conflicts,
-		"exactly_one_of_group":     exactlyOne,
-		"at_least_one_of_group":    atLeastOne,
-		"required_with":            requiredWith,
-		"is_required":              targetAttr.Required,
-		"is_optional":              targetAttr.Optional,
-		"is_computed":              targetAttr.Computed,
-		"forces_recreation":        targetAttr.ForceNew,
-		"dependency_visualization": buildDependencyGraph(*targetAttr),
-	}
+	text := formatter.AttributeDependencies(
+		resourceName,
+		attributeName,
+		conflicts,
+		exactlyOne,
+		atLeastOne,
+		requiredWith,
+		targetAttr.Required,
+		targetAttr.Optional,
+		targetAttr.Computed,
+		targetAttr.ForceNew,
+		buildDependencyGraph(*targetAttr),
+	)
 
-	return map[string]any{"result": dependencies}
+	return SuccessResponse(text)
+}
+
+func trimStrings(values []string, limit int) ([]string, bool) {
+	if limit <= 0 || len(values) <= limit {
+		return values, false
+	}
+	return values[:limit], true
 }
