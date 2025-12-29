@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/dkooll/aztfmcp/compare/v1.0.0...v1.1.0) (2025-12-29)
+
+
+### Features
+
+* **deps:** bump actions/checkout from 4 to 6 ([#5](https://github.com/dkooll/aztfmcp/issues/5)) ([c1aaf49](https://github.com/dkooll/aztfmcp/commit/c1aaf499ec3ff450f65d966b032d2b358850d1b8))
+
 ## 1.0.0 (2025-12-29)
 
 
