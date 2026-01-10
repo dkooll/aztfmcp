@@ -247,7 +247,7 @@ func (s *Server) handleBackfillRelease(args any) map[string]any {
 		ComparisonURL: sql.NullString{},
 	}
 
-	releaseID, _, err := s.db.UpsertProviderRelease(rel)
+	releaseID, err := s.db.UpsertProviderRelease(rel)
 	if err != nil {
 		return ErrorResponse(fmt.Sprintf("Failed to store release: %v", err))
 	}

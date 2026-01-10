@@ -252,10 +252,10 @@ func (s *Server) handleFindSimilarResources(args any) map[string]any {
 	formatterResources := make([]formatter.SimilarResource, len(similarities))
 	for i, sim := range similarities {
 		formatterResources[i] = formatter.SimilarResource{
-			Name:            sim.Resource.Name,
-			SimilarityScore: sim.Score,
-			CommonAttrCount: len(sim.CommonAttributes),
-			FilePath:        sim.Resource.FilePath.String,
+			Name:             sim.Resource.Name,
+			SimilarityScore:  sim.Score,
+			CommonAttrCount:  len(sim.CommonAttributes),
+			FilePath:         sim.Resource.FilePath.String,
 		}
 	}
 

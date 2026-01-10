@@ -77,11 +77,14 @@ func (s *Server) repoShortName() string {
 	return s.repo
 }
 
-func (s *Server) releaseSummaryIfNew(newReleases []string) string {
-	if len(newReleases) == 0 {
-		return ""
+func (s *Server) releaseSummaryIfUpdated(updated []string) string {
+	short := strings.ToLower(s.repoShortName())
+	for _, name := range updated {
+		if strings.ToLower(name) == short {
+			return s.latestReleaseSummaryText()
+		}
 	}
-	return s.latestReleaseSummaryText()
+	return ""
 }
 
 func (s *Server) latestReleaseSummaryText() string {
@@ -832,7 +835,7 @@ func (s *Server) handleSyncProviderUpdates() map[string]any {
 		progress.Errors,
 	)
 
-	if summary := s.releaseSummaryIfNew(progress.NewReleases); summary != "" {
+	if summary := s.releaseSummaryIfUpdated(progress.UpdatedRepos); summary != "" {
 		if strings.TrimSpace(text) != "" {
 			text = strings.TrimSpace(text) + "\n\n" + summary
 		} else {
@@ -1597,7 +1600,7 @@ func findDocumentationFile(files []database.RepositoryFile, suffix string, kind 
 	for i := range files {
 		f := &files[i]
 		if strings.Contains(f.FilePath, "docs/") &&
-			(strings.HasSuffix(f.FilePath, suffix+".md") || strings.HasSuffix(f.FilePath, suffix+".html.markdown")) {
+		   (strings.HasSuffix(f.FilePath, suffix+".md") || strings.HasSuffix(f.FilePath, suffix+".html.markdown")) {
 			return f
 		}
 	}

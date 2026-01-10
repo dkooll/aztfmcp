@@ -81,7 +81,7 @@ func TestHandleGetReleaseSnippet(t *testing.T) {
 
 	// No previous tag: should error
 	rel.PreviousTag = sqlNull("")
-	if _, _, err := db.UpsertProviderRelease(rel); err != nil {
+	if _, err := db.UpsertProviderRelease(rel); err != nil {
 		t.Fatalf("failed to update release: %v", err)
 	}
 	resp = s.handleGetReleaseSnippet(map[string]any{

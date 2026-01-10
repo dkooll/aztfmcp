@@ -31,15 +31,15 @@ type parsedSection struct {
 	Entries []string
 }
 
-func (s *Syncer) captureReleaseMetadata(repositoryID int64, repo GitHubRepo) ([]string, error) {
+func (s *Syncer) captureReleaseMetadata(repositoryID int64, repo GitHubRepo) error {
 	changelog, err := s.db.GetFile(repo.Name, "CHANGELOG.md")
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	releases := parseChangelogReleases(changelog.Content)
 	if len(releases) == 0 {
-		return nil, fmt.Errorf("no releases parsed from CHANGELOG.md")
+		return fmt.Errorf("no releases parsed from CHANGELOG.md")
 	}
 
 	tags, err := s.githubClient.listTags(repo.FullName, 5)
@@ -54,8 +54,6 @@ func (s *Syncer) captureReleaseMetadata(repositoryID int64, repo GitHubRepo) ([]
 			tagLookup[normalized] = tag
 		}
 	}
-
-	var newReleases []string
 
 	for idx, rel := range releases {
 		record := &database.ProviderRelease{
@@ -83,22 +81,18 @@ func (s *Syncer) captureReleaseMetadata(repositoryID int64, repo GitHubRepo) ([]
 			}
 		}
 
-		releaseID, isNew, err := s.db.UpsertProviderRelease(record)
+		releaseID, err := s.db.UpsertProviderRelease(record)
 		if err != nil {
-			return newReleases, fmt.Errorf("failed to persist release %s: %w", rel.Version, err)
-		}
-
-		if isNew {
-			newReleases = append(newReleases, rel.Version)
+			return fmt.Errorf("failed to persist release %s: %w", rel.Version, err)
 		}
 
 		entries := buildReleaseEntries(rel)
 		if err := s.db.ReplaceReleaseEntries(releaseID, entries); err != nil {
-			return newReleases, fmt.Errorf("failed to persist release entries for %s: %w", rel.Version, err)
+			return fmt.Errorf("failed to persist release entries for %s: %w", rel.Version, err)
 		}
 	}
 
-	return newReleases, nil
+	return nil
 }
 
 func parseChangelogReleases(content string) []parsedRelease {
@@ -177,8 +171,8 @@ func parseChangelogReleases(content string) []parsedRelease {
 }
 
 func parseReleaseHeading(line string) (*parsedRelease, bool) {
-	trimmedHead, _ := strings.CutPrefix(line, "##")
-	trimmed := strings.TrimSpace(trimmedHead)
+		trimmedHead, _ := strings.CutPrefix(line, "##")
+		trimmed := strings.TrimSpace(trimmedHead)
 	trimmed = strings.TrimSpace(trimmed)
 	if trimmed == "" {
 		return nil, false

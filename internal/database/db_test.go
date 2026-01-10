@@ -76,7 +76,7 @@ func TestUpsertReleaseAndEntries(t *testing.T) {
 	repoID, _ := db.InsertRepository(repo)
 
 	rel := &ProviderRelease{RepositoryID: repoID, Version: "1.0.0", Tag: "v1.0.0"}
-	relID, _, err := db.UpsertProviderRelease(rel)
+	relID, err := db.UpsertProviderRelease(rel)
 	if err != nil {
 		t.Fatalf("upsert release: %v", err)
 	}
@@ -99,42 +99,6 @@ func TestUpsertReleaseAndEntries(t *testing.T) {
 	latest, entries, err := db.GetLatestReleaseWithEntries(repoID)
 	if err != nil || latest.ID != relID || len(entries) != 1 {
 		t.Fatalf("latest release fetch failed: %v %+v", err, entries)
-	}
-}
-
-func TestUpsertProviderReleaseIsNew(t *testing.T) {
-	db := newTestDB(t)
-	repo := &Repository{Name: "terraform-provider-azurerm"}
-	repoID, _ := db.InsertRepository(repo)
-
-	// First insert should be new
-	rel := &ProviderRelease{RepositoryID: repoID, Version: "1.0.0", Tag: "v1.0.0"}
-	_, isNew, err := db.UpsertProviderRelease(rel)
-	if err != nil {
-		t.Fatalf("first upsert: %v", err)
-	}
-	if !isNew {
-		t.Error("first insert should be new")
-	}
-
-	// Second insert of same version should not be new
-	rel2 := &ProviderRelease{RepositoryID: repoID, Version: "1.0.0", Tag: "v1.0.0-updated"}
-	_, isNew2, err := db.UpsertProviderRelease(rel2)
-	if err != nil {
-		t.Fatalf("second upsert: %v", err)
-	}
-	if isNew2 {
-		t.Error("second insert of same version should not be new")
-	}
-
-	// New version should be new
-	rel3 := &ProviderRelease{RepositoryID: repoID, Version: "2.0.0", Tag: "v2.0.0"}
-	_, isNew3, err := db.UpsertProviderRelease(rel3)
-	if err != nil {
-		t.Fatalf("third upsert: %v", err)
-	}
-	if !isNew3 {
-		t.Error("new version should be new")
 	}
 }
 
@@ -380,7 +344,7 @@ func TestClearRepositoryData(t *testing.T) {
 	}
 
 	rel := &ProviderRelease{RepositoryID: repoID, Version: "1.0.0", Tag: "v1.0.0"}
-	if _, _, err := db.UpsertProviderRelease(rel); err != nil {
+	if _, err := db.UpsertProviderRelease(rel); err != nil {
 		t.Fatalf("upsert release: %v", err)
 	}
 
@@ -461,7 +425,7 @@ func TestGetProviderReleaseByTag(t *testing.T) {
 	}
 
 	rel := &ProviderRelease{RepositoryID: repoID, Version: "1.0.0", Tag: "v1.0.0"}
-	_, _, _ = db.UpsertProviderRelease(rel)
+	_, _ = db.UpsertProviderRelease(rel)
 
 	got, err := db.GetProviderReleaseByTag(repoID, "v1.0.0")
 	if err != nil {
@@ -478,7 +442,7 @@ func TestGetReleaseWithEntriesByTag(t *testing.T) {
 	repoID, _ := db.InsertRepository(repo)
 
 	rel := &ProviderRelease{RepositoryID: repoID, Version: "1.0.0", Tag: "v1.0.0"}
-	relID, _, _ := db.UpsertProviderRelease(rel)
+	relID, _ := db.UpsertProviderRelease(rel)
 
 	entries := []ProviderReleaseEntry{
 		{EntryKey: "feat-001", Title: "Added feature", Section: "Features"},
@@ -665,7 +629,7 @@ func TestGetProviderReleaseEntryByKey(t *testing.T) {
 	}
 
 	rel := &ProviderRelease{RepositoryID: repoID, Version: "1.0.0", Tag: "v1.0.0"}
-	relID, _, err := db.UpsertProviderRelease(rel)
+	relID, err := db.UpsertProviderRelease(rel)
 	if err != nil {
 		t.Fatalf("upsert release: %v", err)
 	}
@@ -774,7 +738,7 @@ func TestIntegrationFullWorkflow(t *testing.T) {
 		PreviousVersion: sql.NullString{Valid: true, String: "0.9.0"},
 		ReleaseDate:     sql.NullString{Valid: true, String: "2024-01-01"},
 	}
-	relID, _, err := db.UpsertProviderRelease(rel)
+	relID, err := db.UpsertProviderRelease(rel)
 	if err != nil {
 		t.Fatalf("upsert release: %v", err)
 	}
