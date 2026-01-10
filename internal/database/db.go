@@ -568,8 +568,14 @@ func (db *DB) GetProviderResourceSource(resourceID int64) (*ProviderResourceSour
 	return &src, nil
 }
 
-func (db *DB) UpsertProviderRelease(r *ProviderRelease) (int64, error) {
-	_, err := db.conn.Exec(`
+func (db *DB) UpsertProviderRelease(r *ProviderRelease) (int64, bool, error) {
+	var existingID int64
+	err := db.conn.QueryRow(`
+		SELECT id FROM provider_releases WHERE repository_id = ? AND version = ?
+	`, r.RepositoryID, r.Version).Scan(&existingID)
+	isNew := err != nil
+
+	_, err = db.conn.Exec(`
 		INSERT INTO provider_releases (
 			repository_id, version, tag, previous_version, previous_tag,
 			commit_sha, previous_commit_sha, release_date, comparison_url
@@ -585,17 +591,17 @@ func (db *DB) UpsertProviderRelease(r *ProviderRelease) (int64, error) {
 			comparison_url = excluded.comparison_url
 	`, r.RepositoryID, r.Version, r.Tag, r.PreviousVersion, r.PreviousTag, r.CommitSHA, r.PreviousCommitSHA, r.ReleaseDate, r.ComparisonURL)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 
 	var id int64
 	if err := db.conn.QueryRow(`
 		SELECT id FROM provider_releases WHERE repository_id = ? AND version = ?
 	`, r.RepositoryID, r.Version).Scan(&id); err != nil {
-		return 0, err
+		return 0, false, err
 	}
 
-	return id, nil
+	return id, isNew, nil
 }
 
 func (db *DB) ReplaceReleaseEntries(releaseID int64, entries []ProviderReleaseEntry) error {

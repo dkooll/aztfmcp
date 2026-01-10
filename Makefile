@@ -28,7 +28,7 @@ lint:
 	golangci-lint run
 
 test:
-	$(GO) test -v ./...
+	CGO_ENABLED=$(CGO_ENABLED) $(GO) test $(GOFLAGS) -v ./...
 
 build:
 	mkdir -p $(BUILD_DIR)
@@ -70,7 +70,7 @@ clean:
 	$(GO) clean
 
 test-coverage:
-	$(GO) test -v -coverprofile=coverage.out ./...
+	CGO_ENABLED=$(CGO_ENABLED) $(GO) test $(GOFLAGS) -v -coverprofile=coverage.out ./...
 	$(GO) tool cover -html=coverage.out -o coverage.html
 
 dev-setup: deps

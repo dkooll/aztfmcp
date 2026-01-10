@@ -105,7 +105,7 @@ func InsertRelease(t *testing.T, db *database.DB, repoID int64, version, tag, pr
 		Tag:          tag,
 		PreviousTag:  sql.NullString{String: previousTag, Valid: previousTag != ""},
 	}
-	id, err := db.UpsertProviderRelease(rel)
+	id, _, err := db.UpsertProviderRelease(rel)
 	if err != nil {
 		t.Fatalf("failed to upsert release: %v", err)
 	}

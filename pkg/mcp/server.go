@@ -77,14 +77,11 @@ func (s *Server) repoShortName() string {
 	return s.repo
 }
 
-func (s *Server) releaseSummaryIfUpdated(updated []string) string {
-	short := strings.ToLower(s.repoShortName())
-	for _, name := range updated {
-		if strings.ToLower(name) == short {
-			return s.latestReleaseSummaryText()
-		}
+func (s *Server) releaseSummaryIfNew(newReleases []string) string {
+	if len(newReleases) == 0 {
+		return ""
 	}
-	return ""
+	return s.latestReleaseSummaryText()
 }
 
 func (s *Server) latestReleaseSummaryText() string {
@@ -835,7 +832,7 @@ func (s *Server) handleSyncProviderUpdates() map[string]any {
 		progress.Errors,
 	)
 
-	if summary := s.releaseSummaryIfUpdated(progress.UpdatedRepos); summary != "" {
+	if summary := s.releaseSummaryIfNew(progress.NewReleases); summary != "" {
 		if strings.TrimSpace(text) != "" {
 			text = strings.TrimSpace(text) + "\n\n" + summary
 		} else {

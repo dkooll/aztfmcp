@@ -97,6 +97,7 @@ type SyncProgress struct {
 	CurrentRepo    string
 	Errors         []string
 	UpdatedRepos   []string
+	NewReleases    []string
 }
 
 var ErrRepoContentUnavailable = errors.New("repository content unavailable")
@@ -262,7 +263,7 @@ func (s *Syncer) processRepoQueue(repos []GitHubRepo, progress *SyncProgress, on
 		progress.CurrentRepo = repo.Name
 		mu.Unlock()
 
-		err := s.syncRepository(repo)
+		newReleases, err := s.syncRepository(repo)
 		if err != nil {
 			errMsg := fmt.Sprintf("Failed to sync %s: %v", repo.Name, err)
 			log.Println(errMsg)
@@ -277,6 +278,9 @@ func (s *Syncer) processRepoQueue(repos []GitHubRepo, progress *SyncProgress, on
 		mu.Lock()
 		progress.ProcessedRepos++
 		progress.CurrentRepo = repo.Name
+		if len(newReleases) > 0 {
+			progress.NewReleases = append(progress.NewReleases, newReleases...)
+		}
 		if onSuccess != nil {
 			onSuccess(progress, repo)
 		}
@@ -347,10 +351,10 @@ func (s *Syncer) fetchRepositoryByName(name string) (GitHubRepo, error) {
 	return repo, nil
 }
 
-func (s *Syncer) syncRepository(repo GitHubRepo) error {
+func (s *Syncer) syncRepository(repo GitHubRepo) ([]string, error) {
 	repositoryID, err := s.insertRepositoryMetadata(repo)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if err := s.clearExistingRepositoryData(repositoryID); err != nil {
@@ -363,16 +367,17 @@ func (s *Syncer) syncRepository(repo GitHubRepo) error {
 
 	if err := s.syncRepositoryContent(repositoryID, repo); err != nil {
 		if errors.Is(err, ErrRepoContentUnavailable) {
-			return s.handleUnavailableRepo(repositoryID, repo.Name)
+			return nil, s.handleUnavailableRepo(repositoryID, repo.Name)
 		}
-		return fmt.Errorf("failed to sync files: %w", err)
+		return nil, fmt.Errorf("failed to sync files: %w", err)
 	}
 
 	if err := s.parseProviderRepository(repositoryID, repo); err != nil {
 		log.Printf("Warning: failed to parse provider resources for %s: %v", repo.Name, err)
 	}
 
-	if err := s.captureReleaseMetadata(repositoryID, repo); err != nil {
+	newReleases, err := s.captureReleaseMetadata(repositoryID, repo)
+	if err != nil {
 		log.Printf("Warning: failed to ingest release metadata for %s: %v", repo.Name, err)
 	}
 
@@ -384,7 +389,7 @@ func (s *Syncer) syncRepository(repo GitHubRepo) error {
 		log.Printf("Warning: failed to persist aliases for %s: %v", repo.Name, err)
 	}
 
-	return nil
+	return newReleases, nil
 }
 
 func (s *Syncer) insertRepositoryMetadata(repo GitHubRepo) (int64, error) {

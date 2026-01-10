@@ -147,11 +147,11 @@ type testSyncer struct {
 	syncFn func(GitHubRepo) error
 }
 
-func (s *testSyncer) syncRepository(repo GitHubRepo) error {
+func (s *testSyncer) syncRepository(repo GitHubRepo) ([]string, error) {
 	if s.syncFn != nil {
-		return s.syncFn(repo)
+		return nil, s.syncFn(repo)
 	}
-	return nil
+	return nil, nil
 }
 
 func (s *testSyncer) processRepoQueue(repos []GitHubRepo, progress *SyncProgress, onSuccess func(*SyncProgress, GitHubRepo)) {
@@ -165,7 +165,8 @@ func (s *testSyncer) processRepoQueue(repos []GitHubRepo, progress *SyncProgress
 	var mu sync.Mutex
 
 	handle := func(repo GitHubRepo) {
-		if err := s.syncRepository(repo); err != nil {
+		newReleases, err := s.syncRepository(repo)
+		if err != nil {
 			mu.Lock()
 			progress.Errors = append(progress.Errors, err.Error())
 			progress.ProcessedRepos++
@@ -176,6 +177,9 @@ func (s *testSyncer) processRepoQueue(repos []GitHubRepo, progress *SyncProgress
 		mu.Lock()
 		progress.ProcessedRepos++
 		progress.CurrentRepo = repo.Name
+		if len(newReleases) > 0 {
+			progress.NewReleases = append(progress.NewReleases, newReleases...)
+		}
 		if onSuccess != nil {
 			onSuccess(progress, repo)
 		}
